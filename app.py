@@ -7,6 +7,8 @@ import time
 import plotly.graph_objects as go
 import base64
 import io 
+import matplotlib.pyplot as plt
+import seaborn as sns
 from PIL import Image
 from scipy.stats import poisson 
 
