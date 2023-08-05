@@ -3,10 +3,13 @@ import pandas as pd
 import numpy as np
 import os
 import random
-import time
-import seaborn as sns
-import matplotlib.pyplot as plt
+import time 
+import plotly.graph_objects as go
+import base64
+import io 
+from PIL import Image
 from scipy.stats import poisson 
+
 
 st.set_page_config(
     page_title = 'Previsão Esportiva - Copa do Mundo Qatar 2022',
@@ -43,7 +46,8 @@ def Pontuacao(tabela):
 
     for linha in range(tabela_passado.shape[0]):
         s1, s2 = tabela_passado.loc[linha, ['Seleção1', 'Seleção2']]
-        g1, g2 = tabela_passado.loc[linha, 'Resultado'].split('x')
+        placar = tabela_passado.loc[linha, 'Resultado']
+        g1, g2 = placar[0], placar[2]
 
         aux.loc[s1, 'GP'] += int(g1)
         aux.loc[s1, 'GC'] += int(g2)
@@ -68,6 +72,7 @@ def Pontuacao(tabela):
     aux.sort_values(by = ['P', 'SG', 'GP'], ascending = False, inplace = True)
 
     return aux
+
 
 
 
@@ -171,7 +176,7 @@ def SimulaCopa(tabela):
     ## TABELA COM OS ACONTECIMENTOS DA COPA
     cols = ['1st', '2nd', '3th', '4th', 'Oitavas', 'Quartas', 'Semis', 'Final', 'Campeão']
     info = pd.DataFrame(0, columns = cols, index = selecoes.index)
-
+    
 
     ## COMPLETA TODOS OS JOGOS FALTANTES DA PRIMEIRA FASE
     for i in range(48):
@@ -183,6 +188,17 @@ def SimulaCopa(tabela):
     ## SUMARIZA OS RESULTADOS DA PRIMEIRA FASE
     pontuacao = Pontuacao(tabela_sim)
 
+    
+    def quem_ganhou(placar, selecao1, selecao2):
+        g1, g2 = placar[0], placar[2]
+        if g1 == g2:
+            aux = placar[5] 
+            return selecao1 if aux == '1' else selecao2
+        elif g1 > g2:
+            return selecao1
+        else:
+            return selecao2 
+    
     ## SEPARA AS SELECOES QUE AVANÇARAM PARA AS OITAVAS - TOP16
     top16 = {}
     for grupo in list('ABCDEFGH'):
@@ -193,9 +209,8 @@ def SimulaCopa(tabela):
             info.loc[i,j] += 1
 
     ## PREENCHE NA TABELA AS SELECOES QUE AVANCARAM PARA OITAVAS
-    tabela_sim.replace(top16, inplace = True)
-
-
+    tabela_sim.replace(top16, inplace = True) 
+    
     def SimulaEtapa(tabela, etapa): #OITAVAS, QUARTAS, SEMIS
         indices = tabela[tabela['Rodada'] == etapa].index.tolist()   #indices na tabela
         avanca = {}
@@ -204,19 +219,25 @@ def SimulaCopa(tabela):
                 jogo = SimulaJogoMataMata(tabela.loc[i, 'Seleção1'], tabela.loc[i, 'Seleção2'])
                 avanca[tabela.loc[i, 'Grupo']] = jogo[0]  #guarda no dicionario quem venceu
                 tabela.loc[i, 'Resultado'] = jogo[3] #preenche a tabela com o placar simulado
+            else:
+                avanca[tabela.loc[i, 'Grupo']] = quem_ganhou(placar = tabela.loc[i, 'Resultado'],
+                                                            selecao1 = tabela.loc[i, 'Seleção1'], 
+                                                            selecao2 = tabela.loc[i, 'Seleção2'])
+                
+                
         tabela['Seleção1'].replace(avanca, inplace = True)
         tabela['Seleção2'].replace(avanca, inplace = True)
         return avanca, tabela
 
     # SIMULAÇÃO DAS ETAPAS DA SEGUNDA FASE
-    top8, tabela_sim = SimulaEtapa(tabela_sim, 'OITAVAS')
-    top4, tabela_sim = SimulaEtapa(tabela_sim, 'QUARTAS')
+    top8, tabela_sim = SimulaEtapa(tabela_sim, 'OITAVAS') 
+    top4, tabela_sim = SimulaEtapa(tabela_sim, 'QUARTAS') 
     top2, tabela_sim = SimulaEtapa(tabela_sim, 'SEMIS')
 
     # TERCEIRO E QUARTO FINALISTAS
     teq = list(set(top4.values()) - set(top2.values()))
     tabela_sim.replace({'PS1': teq[0], 'PS2': teq[1]}, inplace = True)
-    terceiro = SimulaJogoMataMata(top2['S1'], top2['S2'])
+    terceiro = SimulaJogoMataMata(teq[0], teq[1])
     tabela_sim.loc[62, 'Resultado'] = terceiro[3]
 
     # GRANDE FINAL
@@ -257,6 +278,134 @@ Texto(texto = 'Previsão Esportiva - Copa do Mundo Feminina 2023 🏆',
 st.image('imagens/banner-copa-feminina-m.png', use_column_width = True)
  
 st.markdown('---')
+
+
+######### GRÁFICO DA EVOLUÇÃO DAS SELEÇÕES NA COPA ###########
+
+
+arquivos = sorted(list(set([i[:10] for i in os.listdir('outputs')])))
+ultimo = arquivos.pop()
+julho = list(filter(lambda x: x[4] == '7', arquivos))
+agosto = list(filter(lambda x: x[4] == '8', arquivos)) 
+atualizacoes = [ultimo] + julho + agosto 
+
+
+def formatacao(x):
+	if x == 'InicioCopa':
+		return 'Início da Competição'
+	else:
+		return f'Resultados até dia {x[:2]}/{x[3:5]}/{x[-4:]}'
+ 
+dados_grafico = pd.DataFrame()
+
+for at in atualizacoes:
+	aux = pd.read_excel(f'outputs/{at}-SimulaçõesCopa.xlsx', index_col = 'Seleção')
+	dados_grafico[at] = aux['Campeão']
+ 
+
+botao_filtro = st.checkbox('Deseja filtrar as seleções do Gráfico?')
+atu = st.multiselect('Atualização', dados_grafico.index, disabled = not botao_filtro, default = dados_grafico.index[:8].tolist()) 
+ 
+
+if botao_filtro:
+	dados_grafico = dados_grafico.loc[atu]
+
+
+def grafico_evolucao_na_copa(): 
+ 
+	# Supondo que 'df' é seu DataFrame
+	df = dados_grafico.copy()#.iloc[:4]
+	df = pd.concat([pd.DataFrame(columns=['Inicio']), df, pd.DataFrame(columns=['Final'])], axis=1)
+
+	# Converter as strings de probabilidades em números
+	for col in df.columns:
+	    df[col] = df[col].str.rstrip('%').astype('float') / 100.0
+
+	print(df.max().max())
+
+	# Configurações do gráfico
+	fig = go.Figure()
+
+	# Adicionar uma linha para cada país
+	for country in df.index:
+	    fig.add_trace(go.Scatter(x=df.columns, y=df.loc[country], mode='lines', name=country))
+
+	    # Adicionar bandeira
+	    img = Image.open(f'imagens/bandeiras/{country}.png')
+	    img_byte_arr = io.BytesIO()
+	    img.save(img_byte_arr, format='PNG')
+	    encoded_image = base64.b64encode(img_byte_arr.getvalue()).decode('ascii')
+
+	    fig.add_layout_image(
+	        dict(
+	            source='data:image/png;base64,' + encoded_image,
+	            xref="x",
+	            yref="y",
+	            x=df.columns[1],  # Colocar a bandeira no último ponto
+	            y=df.loc[country, df.columns[1]],
+	            sizex=0.5,  # Ajuste conforme necessário
+	            sizey=0.5,  # Ajuste conforme necessário
+	            xanchor="center",  # Centralizar a imagem no eixo x
+	            yanchor="middle",  # Centralizar a imagem no eixo y
+	         
+	            opacity=1,
+	            layer="above")
+	    )
+	    
+	    fig.add_layout_image(
+	        dict(
+	            source='data:image/png;base64,' + encoded_image,
+	            xref="x",
+	            yref="y",
+	            x=df.columns[-2],  # Colocar a bandeira no último ponto
+	            y=df.loc[country, df.columns[-2]],
+	            sizex=0.5,  # Ajuste conforme necessário
+	            sizey=0.5,  # Ajuste conforme necessário
+	            xanchor="center",  # Centralizar a imagem no eixo x
+	            yanchor="middle",  # Centralizar a imagem no eixo y
+	         
+	            opacity=1,
+	            layer="above")
+	    )
+	# Configurar o layout
+	fig.update_layout(
+	    title='<b>Evolução das probabilidades de cada Seleção na Copa</b>',
+	    xaxis_title='',  
+	    yaxis_title='',
+	    height = 800,
+	    showlegend=False,
+	    yaxis_tickformat = '.1%',  # Formato de percentagem para o eixo y
+	)
+
+	# Atualizar o eixo y
+	fig.update_yaxes(range=[-0.025, df.max().max() + 0.025]) 
+
+	 
+	# Atualizar o eixo x
+	fig.update_xaxes(
+	    tickmode = 'array',
+	    tickvals = df.columns[1:-1],
+	    ticktext = df.columns[1:-1],
+	)
+
+	st.plotly_chart(fig, use_container_width=True)
+
+grafico_evolucao_na_copa()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -429,24 +578,92 @@ if st.session_state['pagina'] == 'pagina2':
 ###### PAGINA 3 #######
 if st.session_state['pagina'] == 'pagina3':
 	Texto(texto = '📊 Todos os Números', tamanho = 32, cor = '#0f54c9', alinhamento = 'center', tipo = 'h3')
+
 	arquivos = sorted(list(set([i[:10] for i in os.listdir('outputs')])))
 	ultimo = arquivos.pop()
-	arquivos.insert(0, ultimo)
+	julho = list(filter(lambda x: x[4] == '7', arquivos))
+	agosto = list(filter(lambda x: x[4] == '8', arquivos)) 
+	arquivos = [ultimo] + julho + agosto 
+
 	def formatacao(x):
 		if x == 'InicioCopa':
 			return 'Início da Competição'
 		else:
 			return f'Resultados até dia {x[:2]}/{x[3:5]}/{x[-4:]}'
-	at = st.selectbox('Atualização', arquivos, format_func = formatacao)
+	at = st.selectbox('Atualização', arquivos, format_func = formatacao, index = len(arquivos) - 1)
 	 
 	abas = ['Probabilidades de Avançar', 'Probabilidade de Cair', 'Finais Mais Prováveis']
 	abas = st.tabs(abas)
 
 	with abas[0]: 
-		st.dataframe(pd.read_excel(f'outputs/{at}-SimulaçõesCopa.xlsx'),
+		dados = pd.read_excel(f'outputs/{at}-SimulaçõesCopa.xlsx')
+		st.dataframe(dados,
 		 use_container_width=True,
 		 hide_index=True,
 		 height = 1170 )
+
+		def grafico_barras_probs(prob_data, maximo = 16):
+			#prob_data = pd.read_excel("/content/InicioCopa-SimulaçõesCopa.xlsx")
+			prob_data = prob_data.iloc[:maximo,:]
+			# Convert the 'Campeão' column to numerical values
+			prob_data['Campeão'] = prob_data['Campeão'].str.rstrip('%').astype('float') / 100.0
+
+			# Sort the data by the 'Campeão' column
+			prob_data = prob_data.sort_values(by='Campeão', ascending=False)
+
+			# Create a figure
+			fig = go.Figure()
+
+			# Add a bar trace for the probabilities
+			fig.add_trace(go.Bar(
+			    x=prob_data['Campeão'],
+			    y=prob_data['Seleção'],
+			    orientation='h',   
+			    marker=dict(color='#0f54c9')
+			))
+
+			# Add the flags to the plot
+			for i in range(len(prob_data)):
+			    if prob_data.iloc[i]['Campeão'] < 0.005:
+			        continue
+			    img = Image.open('imagens/bandeiras/' + prob_data.iloc[i]['Seleção'] + '.png')
+			    img.thumbnail((50,50), Image.LANCZOS )
+			    byte_arr = io.BytesIO()
+			    img.save(byte_arr, format='PNG')
+			    encoded_image = base64.b64encode(byte_arr.getvalue()).decode('ascii')
+			    fig.add_layout_image(
+			        dict(source='data:image/png;base64,' + encoded_image,
+			             xref="x", yref="y",
+			             x=prob_data.iloc[i]['Campeão']-0.001, y=prob_data.iloc[i]['Seleção'],
+			             sizex=0.6, sizey=0.6,
+			             xanchor="right", yanchor="middle"))
+
+			for i in range(len(prob_data)):
+			    fig.add_annotation(
+			        x=prob_data.iloc[i]['Campeão']+0.005,
+			        y=prob_data.iloc[i]['Seleção'],
+			        text=str(round(prob_data.iloc[i]['Campeão']*100, 2)) + '%',
+			        showarrow=False,
+			        font=dict(size=12, color="black"),
+			        xshift=10
+			    )
+			# Add labels and title
+			fig.update_layout(
+			    title='<b>Probabilidade de Vencer a Copa do Mundo</b>',
+			    xaxis_title='',
+			    yaxis_title='',
+			    yaxis={'categoryorder':'total ascending'},
+			    autosize=False,
+			    width=800,
+			    height=800,
+			)
+
+			# Show the plot
+			st.plotly_chart(fig, use_container_width=True)
+
+		grafico_barras_probs(dados, maximo = 16)
+
+
 
 	with abas[1]:
 		st.dataframe(pd.read_excel(f'outputs/{at}-ProbabilidadeCair.xlsx'),
