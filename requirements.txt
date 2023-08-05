@@ -6,3 +6,4 @@ openpyxl==3.0.10
 scipy==1.9.3 
 plotly==5.9.0
 matplotlib==3.6.0
+seaborn==0.12.1
